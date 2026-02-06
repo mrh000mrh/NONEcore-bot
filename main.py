@@ -1,322 +1,330 @@
 #!/usr/bin/env python3
 """
-NONEcore Config Bot - کامل
+NONEcore Config Bot - نسخه کامل و نهایی
 """
 
 import os
 import logging
 import asyncio
+import io
+import qrcode
 from datetime import datetime, timedelta
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
+from telegram import Update, InputFile
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, ConversationHandler,
-    CallbackQueryHandler, ContextTypes, filters
+    ContextTypes, filters
 )
 from config import Config
 from bot.database import Database
 from bot.processor import ConfigProcessor
 from bot.sender import ConfigSender
+from bot.keyboard import Keyboards
 
-# تنظیمات لاگ
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # استیت‌ها
-UPLOAD_HTML, SETTINGS_VALUE = range(2)
+UPLOAD_FILE, UPLOAD_CONFIRM, SETTINGS_MENU, ADD_CHANNEL, REMOVE_CHANNEL = range(5)
 
-# دیتابیس global
 db = Database()
 
+def check_admin(func):
+    """دکوراتور چک ادمین"""
+    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user_id = str(update.effective_user.id)
+        if user_id != Config.ADMIN_ID:
+            if update.message:
+                await update.message.reply_text("⛔ شما ادمین نیستید.")
+            return
+        return await func(update, context)
+    return wrapper
+
 def main():
-    """نقطه ورود"""
-    logger.info("Starting NONEcore Bot...")
-    
     application = Application.builder().token(Config.BOT_TOKEN).build()
-    
-    # هندلرها
-    application.add_handler(CommandHandler("start", start_command))
-    application.add_handler(CommandHandler("stats", stats_command))
-    application.add_handler(CommandHandler("channels", channels_command))
-    application.add_handler(CommandHandler("settings", settings_command))
-    application.add_handler(CommandHandler("clients", clients_command))
-    application.add_handler(CommandHandler("toggle_reminder", toggle_reminder_command))
     
     # کانورسیون آپلود
     upload_conv = ConversationHandler(
-        entry_points=[CommandHandler("upload", upload_start)],
+        entry_points=[MessageHandler(filters.Regex('^📤 آپلود HTML$'), upload_start)],
         states={
-            UPLOAD_HTML: [MessageHandler(filters.Document.ALL, upload_process)]
+            UPLOAD_FILE: [MessageHandler(filters.Document.ALL, upload_receive)],
+            UPLOAD_CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, upload_confirm)]
         },
-        fallbacks=[CommandHandler("cancel", upload_cancel)]
+        fallbacks=[CommandHandler("cancel", cancel), MessageHandler(filters.Regex('^🔙 بازگشت$'), back_to_main)]
     )
+    
+    # کانورسیون تنظیمات
+    settings_conv = ConversationHandler(
+        entry_points=[MessageHandler(filters.Regex('^⚙️ تنظیمات$'), settings_menu)],
+        states={
+            SETTINGS_MENU: [
+                MessageHandler(filters.Regex('^✅/❌ ارسال کلاینت‌ها$'), toggle_clients),
+                MessageHandler(filters.Regex('^✅/❌ حالت تأییدیه$'), toggle_approval),
+                MessageHandler(filters.Regex('^✅/❌ یادآوری renewal$'), toggle_reminder),
+                MessageHandler(filters.Regex('^🔢 تغییر batch size$'), change_batch),
+                MessageHandler(filters.Regex('^⏱️ تغییر فاصله$'), change_interval),
+                MessageHandler(filters.Regex('^📢 مدیریت کانال‌ها$'), manage_channels),
+            ],
+            ADD_CHANNEL: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_channel)],
+            REMOVE_CHANNEL: [MessageHandler(filters.TEXT & ~filters.COMMAND, remove_channel)],
+        },
+        fallbacks=[MessageHandler(filters.Regex('^🔙 بازگشت$'), back_to_main)]
+    )
+    
+    # هندلرها
+    application.add_handler(CommandHandler("start", start))
     application.add_handler(upload_conv)
+    application.add_handler(settings_conv)
+    application.add_handler(MessageHandler(filters.Regex('^📊 آمار$'), stats))
+    application.add_handler(MessageHandler(filters.Regex('^📱 کلاینت‌ها$'), clients))
+    application.add_handler(MessageHandler(filters.Regex('^🔔 یادآوری$'), reminder_info))
+    application.add_handler(MessageHandler(filters.Regex('^❓ راهنما$'), help_info))
     
-    # callback ها
-    application.add_handler(CallbackQueryHandler(button_handler))
-    
-    # شروع
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    application.run_polling()
 
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """دستور شروع"""
-    user_id = str(update.effective_user.id)
-    
-    if user_id != Config.ADMIN_ID:
-        await update.message.reply_text("⛔ شما ادمین نیستید.")
-        return
-    
-    # محاسبه زمان renewal
+@check_admin
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """شروع"""
+    await show_main_menu(update, context)
+
+async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """نمایش منوی اصلی"""
+    # محاسبه renewal
     now = datetime.now()
     next_renewal = (now + timedelta(days=1)).replace(hour=Config.RENEWAL_HOUR, minute=0, second=0)
     hours_left = int((next_renewal - now).total_seconds() / 3600)
     
-    # چک کردن یادآوری
-    reminder_enabled = db.get_setting('reminder_enabled', 'true') == 'true'
+    reminder_on = db.get_setting('reminder_enabled', 'true') == 'true'
     
-    keyboard = [
-        [InlineKeyboardButton("📤 آپلود HTML", callback_data='upload')],
-        [InlineKeyboardButton("📊 آمار", callback_data='stats')],
-        [InlineKeyboardButton("⚙️ تنظیمات", callback_data='settings')],
-        [InlineKeyboardButton("🔔 یادآوری: " + ("✅" if reminder_enabled else "❌"), callback_data='toggle_reminder')]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
+    text = f"""🔷 <b>NONEcore Admin Panel</b>
+
+⚡️ کانال: {Config.BRAND_CHANNEL}
+🤖 ربات: {Config.BRAND_BOT}
+
+⏰ <b>Renewal:</b> {hours_left} ساعت مانده
+🔔 یادآوری: {'✅' if reminder_on else '❌'}
+
+از دکمه‌های زیر استفاده کنید:"""
     
-    renewal_msg = ""
-    if reminder_enabled:
-        renewal_msg = f"""
-⏰ <b>یادآوری مهم!</b>
+    await update.message.reply_text(text, parse_mode='HTML', reply_markup=Keyboards.main_menu())
 
-🔄 <b>Renewal سرور FPS.ms</b>
-⏳ {hours_left} ساعت مانده تا renewal بعدی
-🕐 زمان: هر روز ساعت {Config.RENEWAL_HOUR}:۰۰
-
-🔗 <a href="{Config.FPS_RENEWAL_URL}">کلیک کنید برای renewal</a>
-
-📋 <b>آموزش renewal:</b>
-۱. روی لینک بالا کلیک کنید
-۲. وارد Dashboard FPS.ms شوید
-۳. روی ربات "NONEcore-bot" کلیک کنید
-۴. دکمه "🔄 Renew" را بزنید
-۵. کپچا (اگر بود) را حل کنید
-۶. تأیید کنید ✅
-
-⚠️ اگر renewal نکنید، ربات خاموش می‌شود!
-"""
-    
-    await update.message.reply_text(
-        f"🔷 <b>NONEcore Admin Panel</b>\n\n"
-        f"ربات مدیریت کانفیگ VPN\n"
-        f"کانال: @nonecorebot\n\n"
-        f"{renewal_msg}",
-        parse_mode='HTML',
-        reply_markup=reply_markup,
-        disable_web_page_preview=True
-    )
-
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """هندلر دکمه‌ها"""
-    query = update.callback_query
-    await query.answer()
-    
-    data = query.data
-    
-    if data == 'upload':
-        await upload_start(update, context)
-    elif data == 'stats':
-        await stats_command(update, context)
-    elif data == 'settings':
-        await settings_command(update, context)
-    elif data == 'toggle_reminder':
-        await toggle_reminder(update, context)
-    elif data == 'clients':
-        await clients_command(update, context)
-
+@check_admin
 async def upload_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """شروع آپلود"""
-    user_id = str(update.effective_user.id)
-    if user_id != Config.ADMIN_ID:
-        return ConversationHandler.END
-    
-    await update.callback_query.message.reply_text(
-        "📁 لطفاً فایل HTML اکسپورت شده را ارسال کنید:\n\n"
-        "راهنما:\n"
-        "۱. Telegram Desktop باز کنید\n"
-        "۲. کانال مورد نظر را باز کنید\n"
-        "۳. سه نقطه بالا → Export chat history\n"
-        "۴. فرمت HTML را انتخاب کنید\n"
-        "۵. فایل را اینجا ارسال کنید\n\n"
-        "یا /cancel برای لغو"
+    await update.message.reply_text(
+        "📁 فایل HTML را ارسال کنید:\n\n"
+        "راهنما: Telegram Desktop → کانال → Export chat history → HTML",
+        reply_markup=Keyboards.remove_keyboard()
     )
-    return UPLOAD_HTML
+    return UPLOAD_FILE
 
-async def upload_process(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """پردازش فایل HTML"""
-    user_id = str(update.effective_user.id)
-    if user_id != Config.ADMIN_ID:
-        return ConversationHandler.END
-    
+@check_admin
+async def upload_receive(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """دریافت فایل"""
     try:
-        # دریافت فایل
         document = update.message.document
+        if not document.file_name.endswith('.html'):
+            await update.message.reply_text("❌ فقط فایل HTML قبول است.")
+            return UPLOAD_FILE
+        
         file = await document.get_file()
         file_content = await file.download_as_bytearray()
         html_content = file_content.decode('utf-8', errors='ignore')
-        
-        await update.message.reply_text("✅ فایل دریافت شد. در حال پردازش...")
         
         # استخراج کانفیگ‌ها
         processor = ConfigProcessor()
         configs = processor.extract_from_html(html_content)
         
         if not configs:
-            await update.message.reply_text("❌ هیچ کانفیگی در فایل یافت نشد.")
+            await update.message.reply_text("❌ هیچ کانفیگی یافت نشد.", reply_markup=Keyboards.main_menu())
             return ConversationHandler.END
         
-        await update.message.reply_text(f"🔄 {len(configs)} کانفیگ یافت شد. در حال ارسال...")
+        # ذخیره موقت
+        context.user_data['configs'] = configs
+        context.user_data['duplicate_count'] = 0
         
-        # ارسال به کانال
-        sender = ConfigSender(context.bot)
-        channels = Config.CHANNELS.split(',')
+        # شمارش تکراری‌ها
+        new_configs = []
+        for cfg in configs:
+            if db.is_duplicate(cfg['link']):
+                context.user_data['duplicate_count'] += 1
+            else:
+                new_configs.append(cfg)
         
-        sent_count = 0
-        duplicate_count = 0
+        context.user_data['new_configs'] = new_configs
         
-        for config in configs:
-            # چک تکراری
-            if db.is_duplicate(config['link']):
-                duplicate_count += 1
-                continue
-            
-            # ذخیره در دیتابیس
-            if db.add_config(config):
-                # ارسال به کانال‌ها
-                for channel in channels:
-                    try:
-                        await sender.send_config(channel.strip(), config)
-                        sent_count += 1
-                        
-                        # آپدیت آمار
-                        db.increment_daily(config['location'])
-                        
-                        # تاخیر برای جلوگیری از flood
-                        await asyncio.sleep(2)
-                        
-                    except Exception as e:
-                        logger.error(f"Error sending to {channel}: {e}")
+        text = f"""📊 <b>نتیجه اسکن:</b>
+
+🔍 کل یافت شده: {len(configs)}
+✅ جدید: {len(new_configs)}
+🔄 تکراری: {context.user_data['duplicate_count']}
+
+آیا ارسال شود؟"""
         
-        # گزارش نهایی
-        await update.message.reply_text(
-            f"✅ پردازش تمام شد!\n\n"
-            f"📤 ارسال شده: {sent_count}\n"
-            f"🔄 تکراری: {duplicate_count}\n"
-            f"❌ خطا: {len(configs) - sent_count - duplicate_count}"
-        )
+        await update.message.reply_text(text, parse_mode='HTML', reply_markup=Keyboards.upload_confirm())
+        return UPLOAD_CONFIRM
         
     except Exception as e:
         logger.error(f"Upload error: {e}")
-        await update.message.reply_text(f"❌ خطا در پردازش: {str(e)}")
+        await update.message.reply_text(f"❌ خطا: {str(e)}", reply_markup=Keyboards.main_menu())
+        return ConversationHandler.END
+
+@check_admin
+async def upload_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تأیید آپلود"""
+    text = update.message.text
+    
+    if 'لغو' in text or 'بازگشت' in text:
+        await update.message.reply_text("❌ لغو شد.", reply_markup=Keyboards.main_menu())
+        return ConversationHandler.END
+    
+    if 'تأیید' not in text:
+        return UPLOAD_CONFIRM
+    
+    configs = context.user_data.get('new_configs', [])
+    if not configs:
+        await update.message.reply_text("❌ کانفیگ جدیدی برای ارسال نیست.", reply_markup=Keyboards.main_menu())
+        return ConversationHandler.END
+    
+    await update.message.reply_text(f"🔄 در حال ارسال {len(configs)} کانفیگ...", reply_markup=Keyboards.remove_keyboard())
+    
+    # ارسال
+    sender = ConfigSender(context.bot)
+    channels = db.get_channels()
+    sent = 0
+    
+    for cfg in configs:
+        if db.add_config(cfg):
+            for ch in channels:
+                try:
+                    await sender.send_config(ch, cfg)
+                    sent += 1
+                    db.increment_daily(cfg['location'])
+                    await asyncio.sleep(2)
+                except Exception as e:
+                    logger.error(f"Send error: {e}")
+    
+    # گزارش
+    await update.message.reply_text(
+        f"✅ <b>تمام شد!</b>\n\n"
+        f"📤 ارسال شده: {sent}\n"
+        f"🔄 تکراری: {context.user_data.get('duplicate_count', 0)}",
+        parse_mode='HTML',
+        reply_markup=Keyboards.main_menu()
+    )
     
     return ConversationHandler.END
 
-async def upload_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """لغو آپلود"""
-    await update.message.reply_text("❌ لغو شد.")
-    return ConversationHandler.END
+@check_admin
+async def settings_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """منوی تنظیمات"""
+    settings = {
+        'send_clients': db.get_setting('send_clients', 'true') == 'true',
+        'approval_mode': db.get_setting('approval_mode', 'false') == 'true',
+        'reminder_enabled': db.get_setting('reminder_enabled', 'true') == 'true',
+        'batch_size': db.get_setting('batch_size', '10'),
+        'batch_interval': db.get_setting('batch_interval', '120')
+    }
+    
+    text = f"""⚙️ <b>تنظیمات فعلی:</b>
 
-async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+📱 ارسال کلاینت‌ها: {'✅' if settings['send_clients'] else '❌'}
+✅ حالت تأییدیه: {'✅' if settings['approval_mode'] else '❌'}
+🔔 یادآوری renewal: {'✅' if settings['reminder_enabled'] else '❌'}
+🔢 Batch size: {settings['batch_size']}
+⏱️ فاصله: {settings['batch_interval']} ثانیه
+
+روی گزینه‌ها کلیک کنید:"""
+    
+    await update.message.reply_text(text, parse_mode='HTML', reply_markup=Keyboards.settings_menu())
+    return SETTINGS_MENU
+
+async def toggle_clients(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تغییر ارسال کلاینت‌ها"""
+    new_val = db.toggle_setting('send_clients')
+    await update.message.reply_text(f"📱 ارسال کلاینت‌ها: {'✅ فعال' if new_val else '❌ غیرفعال'}")
+    return await settings_menu(update, context)
+
+async def toggle_approval(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تغییر حالت تأییدیه"""
+    new_val = db.toggle_setting('approval_mode')
+    await update.message.reply_text(f"✅ حالت تأییدیه: {'✅ فعال' if new_val else '❌ غیرفعال'}")
+
+async def toggle_reminder(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تغییر یادآوری"""
+    new_val = db.toggle_setting('reminder_enabled')
+    await update.message.reply_text(f"🔔 یادآوری renewal: {'✅ فعال' if new_val else '❌ غیرفعال'}")
+
+async def change_batch(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تغییر batch size"""
+    await update.message.reply_text("🔢 عدد جدید batch size را وارد کنید (مثلاً: 5):")
+    # TODO: دریافت مقدار
+    return SETTINGS_MENU
+
+async def change_interval(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تغییر فاصله"""
+    await update.message.reply_text("⏱️ فاصله جدید را به ثانیه وارد کنید (مثلاً: 60):")
+    # TODO: دریافت مقدار
+    return SETTINGS_MENU
+
+async def manage_channels(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """مدیریت کانال‌ها"""
+    channels = db.get_channels()
+    text = "📢 کانال‌های فعلی:\n\n" + "\n".join([f"• {c}" for c in channels])
+    text += "\n\nبرای اضافه کردن: /addchannel @channel\nبرای حذف: /removechannel @channel"
+    await update.message.reply_text(text)
+
+async def add_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """اضافه کردن کانال"""
+    text = update.message.text.strip()
+    if text.startswith('@'):
+        if db.add_channel(text):
+            await update.message.reply_text(f"✅ کانال {text} اضافه شد.")
+        else:
+            await update.message.reply_text("❌ خطا در اضافه کردن.")
+    else:
+        await update.message.reply_text("❌ فرمت اشتباه. با @ شروع کنید.")
+    return SETTINGS_MENU
+
+async def remove_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """حذف کانال"""
+    text = update.message.text.strip()
+    if db.remove_channel(text):
+        await update.message.reply_text(f"✅ کانال {text} حذف شد.")
+    else:
+        await update.message.reply_text("❌ خطا در حذف.")
+    return SETTINGS_MENU
+
+@check_admin
+async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """آمار"""
-    user_id = str(update.effective_user.id)
-    if user_id != Config.ADMIN_ID:
-        return
-    
     stats = db.get_stats()
     settings = db.get_all_settings()
     
-    reminder_status = "✅ فعال" if settings.get('reminder_enabled', 'true') == 'true' else "❌ غیرفعال"
-    
-    await update.message.reply_text(
-        f"📊 آمار {Config.BRAND_NAME}\n\n"
-        f"📤 امروز: {stats['today']} کانفیگ\n"
-        f"📈 کل: {stats['total']} کانفیگ\n\n"
-        f"🔔 یادآوری renewal: {reminder_status}\n"
-        f"📦 Batch size: {settings.get('batch_size', '10')}\n"
-        f"⏱️ Batch interval: {settings.get('batch_interval', '120')}s\n"
-        f"✅ Approval mode: {'روشن' if settings.get('approval_mode', 'false') == 'true' else 'خاموش'}\n"
-        f"📱 ارسال کلاینت‌ها: {'روشن' if settings.get('send_clients', 'true') == 'true' else 'خاموش'}"
-    )
+    text = f"""📊 <b>آمار NONEcore</b>
 
-async def channels_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """مدیریت کانال‌ها"""
-    user_id = str(update.effective_user.id)
-    if user_id != Config.ADMIN_ID:
-        return
-    
-    channels = [c.strip() for c in Config.CHANNELS.split(',') if c.strip()]
-    
-    text = "📢 کانال‌های مقصد:\n\n"
-    for i, ch in enumerate(channels, 1):
-        text += f"{i}. {ch}\n"
-    
-    text += f"\n💡 برای تغییر، متغیر CHANNELS را در فایل .env ویرایش کنید."
-    
-    await update.message.reply_text(text)
+📤 امروز: {stats['today']} کانفیگ
+📈 کل: {stats['total']} کانفیگ
 
-async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """تنظیمات"""
-    user_id = str(update.effective_user.id)
-    if user_id != Config.ADMIN_ID:
-        return
+🌍 لوکیشن‌های امروز:"""
     
-    settings = db.get_all_settings()
+    for loc, count in sorted(stats['locations'].items(), key=lambda x: x[1], reverse=True)[:5]:
+        text += f"\n• {loc}: {count}"
     
-    keyboard = [
-        [InlineKeyboardButton(f"ارسال کلاینت‌ها: {'✅' if settings.get('send_clients') == 'true' else '❌'}", callback_data='toggle_clients')],
-        [InlineKeyboardButton(f"حالت تأییدیه: {'✅' if settings.get('approval_mode') == 'true' else '❌'}", callback_data='toggle_approval')],
-        [InlineKeyboardButton(f"یادآوری renewal: {'✅' if settings.get('reminder_enabled') == 'true' else '❌'}", callback_data='toggle_reminder')],
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await update.message.reply_text(
-        "⚙️ تنظیمات NONEcore\n\n"
-        "روی هر گزینه کلیک کنید تا روشن/خاموش شود:",
-        reply_markup=reply_markup
-    )
+    await update.message.reply_text(text, parse_mode='HTML')
 
-async def toggle_reminder(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """تغییر وضعیت یادآوری"""
-    query = update.callback_query
-    current = db.get_setting('reminder_enabled', 'true')
-    new_value = 'false' if current == 'true' else 'true'
-    db.set_setting('reminder_enabled', new_value)
-    
-    await query.answer(f"یادآوری: {'فعال' if new_value == 'true' else 'غیرفعال'}")
-    await start_command(update, context)
+@check_admin
+async def clients(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """کلاینت‌ها"""
+    text = """📱 <b>کلاینت‌های پیشنهادی:</b>
 
-async def toggle_reminder_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """دستور خاموش/روشن یادآوری"""
-    user_id = str(update.effective_user.id)
-    if user_id != Config.ADMIN_ID:
-        return
-    
-    current = db.get_setting('reminder_enabled', 'true')
-    new_value = 'false' if current == 'true' else 'true'
-    db.set_setting('reminder_enabled', new_value)
-    
-    await update.message.reply_text(
-        f"🔔 یادآوری renewal: {'✅ فعال' if new_value == 'true' else '❌ غیرفعال'}"
-    )
+🤖 <b>اندروید:</b>
+• V2RayNG - github.com/2dust/v2rayNG
+• SagerNet - github.com/SagerNet/SagerNet
 
-async def clients_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """لیست کلاینت‌ها"""
-    user_id = str(update.effective_user.id)
-    if user_id != Config.ADMIN_ID:
-        return
-    
-    sender = ConfigSender(context.bot)
-    await sender.send_clients(user_id)
+🍎 <b>iOS:</b>
+• Streisand - App Store
+• Shadowrocket - App Store
 
-if __name__ == "__main__":
-    main()
+💻 <b>ویندوز:</b>
+• v2rayN - github.com/2dust/v2rayN
+• N
