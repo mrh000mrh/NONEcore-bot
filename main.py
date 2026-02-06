@@ -327,4 +327,70 @@ async def clients(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 💻 <b>ویندوز:</b>
 • v2rayN - github.com/2dust/v2rayN
-• N
+• Nekoray - github.com/MatsuriDayo/nekoray
+
+🐧 <b>لینوکس/macOS:</b>
+• Nekoray - github.com/MatsuriDayo/nekoray
+
+🔒 <b>فیلترشکن‌های ضدسانسور:</b>
+• Psiphon - psiphon.ca
+• Tor Browser - torproject.org
+• Tails - tails.boum.org
+• Lantern - getlantern.org
+• Outline - getoutline.org
+
+⚡️ @nonecorebot"""
+    
+    await update.message.reply_text(text, parse_mode='HTML')
+
+@check_admin
+async def reminder_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """اطلاعات renewal"""
+    text = f"""⏰ <b>یادآوری Renewal</b>
+
+🔄 هر ۲۴ ساعت یکبار باید renewal کنید.
+
+📋 <b>آموزش:</b>
+۱. به <a href="{Config.FPS_RENEWAL_URL}">FPS.ms</a> بروید
+۲. روی NONEcore-bot کلیک کنید
+۳. دکمه "🔄 Renew" را بزنید
+۴. کپچا را حل کنید
+۵. تأیید کنید ✅
+
+⚠️ اگر renewal نکنید، ربات خاموش می‌شود!"""
+    
+    await update.message.reply_text(text, parse_mode='HTML', disable_web_page_preview=True)
+
+@check_admin
+async def help_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """راهنما"""
+    text = """❓ <b>راهنمای NONEcore Bot</b>
+
+📤 <b>آپلود HTML:</b>
+فایل Export شده از کانال تلگرام را ارسال کنید.
+
+⚙️ <b>تنظیمات:</b>
+همه پارامترها را می‌توانید از داخل ربات تغییر دهید.
+
+📊 <b>آمار:</b>
+مشاهده تعداد کانفیگ‌های ارسال شده.
+
+🔔 <b>یادآوری:</b>
+اطلاعات renewal سرور.
+
+⚡️ @nonecorebot"""
+    
+    await update.message.reply_text(text, parse_mode='HTML')
+
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """لغو"""
+    await update.message.reply_text("❌ لغو شد.", reply_markup=Keyboards.main_menu())
+    return ConversationHandler.END
+
+async def back_to_main(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """بازگشت به منوی اصلی"""
+    await show_main_menu(update, context)
+    return ConversationHandler.END
+
+if __name__ == "__main__":
+    main()
