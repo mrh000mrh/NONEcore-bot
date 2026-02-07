@@ -1,55 +1,33 @@
-"""
-تنظیمات NONEcore Bot
-"""
-
-from dotenv import load_dotenv
-load_dotenv()  # خواندن .env
-
 import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 class Config:
-    """کلاس تنظیمات"""
+    BOT_TOKEN = os.getenv('BOT_TOKEN')
+    ADMIN_ID = int(os.getenv('ADMIN_ID', 0))
+    CHANNELS = [c.strip() for c in os.getenv('CHANNELS', '@nonecorebot').split(',') if c.strip()]
     
-    # توکن ربات تلگرام
-    BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
+    BATCH_SIZE = int(os.getenv('BATCH_SIZE', 5))
+    BATCH_INTERVAL = int(os.getenv('BATCH_INTERVAL', 120))
+    DELAY = int(os.getenv('DELAY', 0))
+    DAILY_LIMIT = int(os.getenv('DAILY_LIMIT', 200))
     
-    # آیدی عددی ادمین
-    ADMIN_ID = os.environ.get("ADMIN_ID", "")
+    SEND_CLIENTS = os.getenv('SEND_CLIENTS', 'true').lower() == 'true'
+    APPROVAL_MODE = os.getenv('APPROVAL_MODE', 'false').lower() == 'true'
+    REMINDER_ENABLED = os.getenv('REMINDER_ENABLED', 'true').lower() == 'true'
     
-    # کانال‌های مقصد
-    CHANNELS = os.environ.get("CHANNELS", "@nonecorebot")
+    BRAND_NAME = os.getenv('BRAND_NAME', 'NONEcore')
+    BRAND_CHANNEL = os.getenv('BRAND_CHANNEL', '@nonecorebot')
+    BRAND_BOT = os.getenv('BRAND_BOT', '@nonecore_bot')
+    FPS_RENEWAL_URL = os.getenv('FPS_RENEWAL_URL', 'https://fps.ms/dashboard')
     
-    # ارسال کلاینت‌ها
-    SEND_CLIENTS = os.environ.get("SEND_CLIENTS", "true").lower() == "true"
+    CONFIG_TEXT_TEMPLATE = os.getenv('CONFIG_TEXT_TEMPLATE', '')
+    CONFIG_REMARK = os.getenv('CONFIG_REMARK', 'NONEcore | تلگرام: @nonecorebot')
     
-    # حالت تأییدیه
-    APPROVAL_MODE = os.environ.get("APPROVAL_MODE", "false").lower() == "true"
+    DATABASE_PATH = os.getenv('DATABASE_PATH', 'nonecore.db')
+    MAX_HTML_SIZE = 10 * 1024 * 1024
     
-    # تعداد هر batch
-    BATCH_SIZE = int(os.environ.get("BATCH_SIZE", "10"))
-    
-    # فاصله بین batchها
-    BATCH_INTERVAL = int(os.environ.get("BATCH_INTERVAL", "120"))
-    
-    # MongoDB (اختیاری)
-    MONGODB_URI = os.environ.get("MONGODB_URI", "")
-    
-    # ipinfo (اختیاری)
-    IPINFO_TOKEN = os.environ.get("IPINFO_TOKEN", "")
-    
-    # FPS.ms renewal
-    FPS_RENEWAL_URL = os.environ.get("FPS_RENEWAL_URL", "https://fps.ms/dashboard")
-    RENEWAL_HOUR = int(os.environ.get("RENEWAL_HOUR", "21"))
-    
-    # نام برند
-    BRAND_NAME = os.environ.get("BRAND_NAME", "NONEcore")
-    BRAND_CHANNEL = os.environ.get("BRAND_CHANNEL", "@nonecorebot")
-    BRAND_BOT = os.environ.get("BRAND_BOT", "@nonecore_bot")
-    
-    @classmethod
-    def validate(cls):
-        """بررسی تنظیمات ضروری"""
-        if not cls.BOT_TOKEN:
-            raise ValueError("BOT_TOKEN is required!")
-        if not cls.ADMIN_ID:
-            raise ValueError("ADMIN_ID is required!")
+    DEBUG = os.getenv('DEBUG', 'false').lower() == 'true'
+    LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO')
+    TIMEZONE = os.getenv('TIMEZONE', 'Asia/Tehran')
