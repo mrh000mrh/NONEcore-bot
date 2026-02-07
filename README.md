@@ -31,20 +31,20 @@ cd NONEcore-bot
 
 نصب وابستگی‌ها:
 bash
-Copy
+
 pip install -r requirements.txt
 تنظیمات:
 bash
-Copy
+
 cp .env.example .env
 # فایل .env را ویرایش کنید و مقادیر را پر کنید
 اجرا:
 bash
-Copy
+
 python main.py
 نصب با Docker
 bash
-Copy
+
 docker build -t nonecore-bot .
 docker run -d --name nonecore-bot --env-file .env nonecore-bot
 نصب در fps.ms
@@ -56,8 +56,8 @@ docker run -d --name nonecore-bot --env-file .env nonecore-bot
 متغیرهای محیطی را در بخش Environment Variables وارد کنید
 ربات را استارت کنید
 ⚙️ تنظیمات (.env)
-Table
-Copy
+
+
 متغیر	توضیحات	مثال
 BOT_TOKEN	توکن ربات از @BotFather	123456789:ABC...
 ADMIN_ID	آیدی عددی ادمین از @userinfobot	123456789
@@ -121,8 +121,8 @@ ADMIN_ID باید عددی باشد (نه username)
 کانفیگ با ۵ گزارش خرابی حذف می‌شود
 🆘 پشتیبانی
 در صورت مشکل، لاگ‌ها را بررسی کنید:
-bash
-Copy
+
+
 # بدون Docker
 python main.py
 
@@ -130,7 +130,7 @@ python main.py
 docker logs nonecore-bot
 📄 لایسنس
 این پروژه متن‌باز است و تحت لایسنس MIT منتشر شده است.
-Copy
+
 
 ---
 
